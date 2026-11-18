@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Tetris NFC Mini Game</title>
+<style>
+  html, body {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    touch-action: none;
+    overscroll-behavior: none;
+    margin: 0;
+    padding: 0;
+  }
+  body {
+    background: #111;
+    color: #fff;
+    font-family: sans-serif;
+    text-align: center;
+    user-select: none;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+  }
+  .head { font-size: 13px; letter-spacing: 1px; margin-bottom: 6px; color: #ccc; }
+  .head b { color: #00e5ff; font-size: 15px; }
+  .bar { width: 184px; margin: 0 auto 8px; display: flex; justify-content: space-between; align-items: center; }
+  .reset { height: 32px; padding: 0 10px; font-size: 12px; background: #333; color: #fff; border: 0; border-radius: 6px; cursor: pointer; }
+  .pause { width: 42px; height: 32px; font-size: 15px; background: #2a2a2a; color: #fff; border: 1px solid #555; border-radius: 6px; cursor: pointer; }
+  .pause:active { background: #444; }
+  .board-row { display: flex; justify-content: center; align-items: flex-start; gap: 8px; margin-bottom: 10px; }
+  .side-spacer { width: 48px; }
+  .next-box { width: 48px; display: flex; flex-direction: column; align-items: center; gap: 3px; font-size: 10px; color: #888; letter-spacing: 1px; }
+  #nxc { background: #000; border: 1px solid #444; border-radius: 4px; }
+  #c { background: #000; border: 2px solid #444; display: block; cursor: pointer; touch-action: none; }
+  .pad button { width: 56px; height: 56px; font-size: 20px; margin: 4px; background: #222; color: #fff; border: 1px solid #444; border-radius: 8px; }
+  .pad button:active { background: #444; }
+  .info { font-size: 11px; color: #888; margin-top: 8px; }
+</style>
+</head>
+<body>
+  <div class="head">TETRIS NFC MINI GAME<br>PUNKTE <b id="p">0</b></div>
+  <div class="bar">
+    <button class="reset" onclick="i()">Neu starten</button>
+    <button id="pb" class="pause" onclick="tp()">▶</button>
+  </div>
+  <div class="board-row">
+    <div class="side-spacer"></div>
+    <canvas id="c" width="180" height="324"></canvas>
+    <div class="next-box">NEXT<canvas id="nxc" width="44" height="44"></canvas></div>
+  </div>
+  <div class="pad">
+    <button onclick="mv(-1)">◀</button>
+    <button onclick="rot()">↻</button>
+    <button onclick="mv(1)">▶</button><br>
+    <button onclick="drp()">▼</button>
+  </div>
+  <div class="info">by Alp</div>
+
+<script>
+const x = c.getContext("2d");
+const nx = nxc.getContext("2d");
+const cols = 10, rows = 18, sz = 18;
+const colors = Array.of(null, "#00e5ff", "#3388ff", "#ff7700", "#ffee00", "#00ff00", "#cc33ff", "#ff3b30");
+const shapes = Array.of(
+  null,
+  Array.of(Array.of(0,0,0,0), Array.of(1,1,1,1), Array.of(0,0,0,0), Array.of(0,0,0,0)),
+  Array.of(Array.of(2,0,0), Array.of(2,2,2), Array.of(0,0,0)),
+  Array.of(Array.of(0,0,3), Array.of(3,3,3), Array.of(0,0,0)),
+  Array.of(Array.of(4,4), Array.of(4,4)),
+  Array.of(Array.of(0,5,5), Array.of(5,5,0), Array.of(0,0,0)),
+  Array.of(Array.of(0,6,0), Array.of(6,6,6), Array.of(0,0,0)),
+  Array.of(Array.of(7,7,0), Array.of(0,7,7), Array.of(0,0,0))
+);
+
+let grid, piece, nextPiece, px, py, n, lines, t, paused, over, tx, ty;
+let hi = Number(localStorage.getItem("tetris_nfc_hi")) || 0;
+
+function getSpeed() {
+  const lvl = Math.min(Math.floor(lines / 5), 10);
+  return Math.max(150, 550 - lvl * 38);
+}
+
+function randomShape() {
+  const id = Math.floor(Math.random() * 7) + 1;
+  return shapes.at(id).map(r => r.slice());
+}
+
+function drawNext() {
+  nx.clearRect(0, 0, 44, 44);
+  if (!nextPiece) return;
+  let minR = 4, maxR = 0, minC = 4, maxC = 0;
+  nextPiece.forEach((r, ri) => r.forEach((val, ci) => {
+    if (val !== 0) {
+      if (ri < minR) minR = ri;
+      if (ri > maxR) maxR = ri;
+      if (ci < minC) minC = ci;
+      if (ci > maxC) maxC = ci;
+    }
+  }));
+  const bsz = 9;
+  const w = (maxC - minC + 1) * bsz;
+  const h = (maxR - minR + 1) * bsz;
+  const ox = Math.floor((44 - w) / 2);
+  const oy = Math.floor((44 - h) / 2);
+  nextPiece.forEach((r, ri) => r.forEach((val, ci) => {
+    if (val !== 0) {
+      nx.fillStyle = colors.at(val);
+      nx.fillRect(ox + (ci - minC) * bsz, oy + (ri - minR) * bsz, bsz - 1, bsz - 1);
+    }
+  }));
+}
+
+function newPiece() {
+  piece = nextPiece || randomShape();
+  nextPiece = randomShape();
+  drawNext();
+  px = Math.floor(cols / 2) - Math.ceil(piece.at(0).length / 2);
+  py = 0;
+  if (collide(px, py, piece)) {
+    over = true;
+    pb.innerText = "▶";
+    clearInterval(t);
+    if (n > hi) {
+      hi = n;
+      localStorage.setItem("tetris_nfc_hi", hi);
+    }
+  }
+}
+
+function collide(nxPos, nyPos, m) {
+  for (let r = 0; r < m.length; r++) {
+    for (let col = 0; col < m.at(r).length; col++) {
+      if (m.at(r).at(col) !== 0) {
+        let gx = nxPos + col;
+        let gy = nyPos + r;
+        if (gx < 0 || gx >= cols || gy >= rows || (gy >= 0 && grid.at(gy).at(gx) !== 0)) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+function merge() {
+  piece.forEach((r, ri) => {
+    r.forEach((val, ci) => {
+      if (val !== 0 && py + ri >= 0) {
+        grid.at(py + ri)[px + ci] = val;
+      }
+    });
+  });
+}
+
+function clearLines() {
+  let cleared = 0;
+  for (let r = rows - 1; r >= 0; r--) {
+    if (grid.at(r).every(v => v !== 0)) {
+      grid.splice(r, 1);
+      grid.unshift(Array(cols).fill(0));
+      cleared++;
+      r++;
+    }
+  }
+  if (cleared > 0) {
+    const pts = Array.of(0, 10, 30, 60, 100);
+    n += pts.at(cleared);
+    lines += cleared;
+    p.innerText = n;
+    clearInterval(t);
+    t = setInterval(drp, getSpeed());
+  }
+}
+
+function drawBlock(bx, by, val) {
+  x.fillStyle = colors.at(val);
+  x.fillRect(bx * sz, by * sz, sz - 1, sz - 1);
+}
+
+function draw() {
+  x.clearRect(0, 0, c.width, c.height);
+  grid.forEach((r, ri) => r.forEach((val, ci) => { if (val !== 0) drawBlock(ci, ri, val); }));
+  if (piece && !over) {
+    piece.forEach((r, ri) => r.forEach((val, ci) => { if (val !== 0) drawBlock(px + ci, py + ri, val); }));
+  }
+  if (over) {
+    x.fillStyle = "rgba(0, 0, 0, 0.82)";
+    x.fillRect(0, 0, c.width, c.height);
+    x.textAlign = "center";
+
+    x.fillStyle = "#ff3b30";
+    x.font = "bold 22px sans-serif";
+    x.fillText("GAME OVER", 90, 118);
+
+    x.fillStyle = "#ffffff";
+    x.font = "bold 14px sans-serif";
+    x.fillText("Punkte: " + n, 90, 152);
+
+    x.fillStyle = n >= hi && n > 0 ? "#00e5ff" : "#aaaaaa";
+    x.font = "12px sans-serif";
+    x.fillText("Highscore: " + hi, 90, 176);
+
+    x.fillStyle = "#777777";
+    x.font = "11px sans-serif";
+    x.fillText("Tippen für neue Runde", 90, 212);
+  }
+}
+
+function i() {
+  grid = Array.from({length: rows}, () => Array(cols).fill(0));
+  p.innerText = n = lines = 0;
+  paused = true;
+  over = false;
+  nextPiece = null;
+  pb.innerText = "▶";
+  clearInterval(t);
+  newPiece();
+  draw();
+}
+
+function tp() {
+  if (over) { i(); }
+  paused = !paused;
+  if (paused) {
+    clearInterval(t);
+    pb.innerText = "▶";
+  } else {
+    pb.innerText = "❚❚";
+    t = setInterval(drp, getSpeed());
+  }
+}
+
+function mv(dir) {
+  if (paused || over) return;
+  if (!collide(px + dir, py, piece)) {
+    px += dir;
+    draw();
+  }
+}
+
+function rot() {
+  if (paused || over) return;
+  const rotated = piece.at(0).map((_, idx) => piece.map(r => r.at(idx)).reverse());
+  if (!collide(px, py, rotated)) {
+    piece = rotated;
+    draw();
+  }
+}
+
+function drp() {
+  if (paused || over) return;
+  if (!collide(px, py + 1, piece)) {
+    py++;
+  } else {
+    merge();
+    clearLines();
+    newPiece();
+  }
+  draw();
+}
+
+document.addEventListener("touchmove", e => e.preventDefault(), {passive: false});
+
+c.addEventListener("touchstart", e => {
+  const touch = e.changedTouches.item(0);
+  tx = touch.clientX;
+  ty = touch.clientY;
+}, {passive: true});
+
+c.addEventListener("touchend", e => {
+  if (over) { i(); tp(); return; }
+  const touch = e.changedTouches.item(0);
+  const dx = touch.clientX - tx;
+  const dy = touch.clientY - ty;
+  if (Math.abs(dx) < 18 && Math.abs(dy) < 18) { rot(); return; }
+  if (Math.abs(dx) > Math.abs(dy)) {
+    mv(dx > 0 ? 1 : -1);
+  } else if (dy > 0) {
+    drp();
+  }
+}, {passive: true});
+
+onkeydown = e => {
+  if (e.key === "ArrowLeft") mv(-1);
+  if (e.key === "ArrowRight") mv(1);
+  if (e.key === "ArrowUp") rot();
+  if (e.key === "ArrowDown") drp();
+  if (e.key === " ") tp();
+};
+i();
+</script>
+</body>
+</html>
